@@ -23,55 +23,75 @@ class DetalhesCaminhadaScreen extends StatefulWidget {
 
 class _DetalhesCaminhadaScreenState
     extends State<DetalhesCaminhadaScreen> {
-  final ImagePicker _picker = ImagePicker();
-  final CaminhadaStorageService _storage = CaminhadaStorageService();
+  final ImagePicker _imagePicker =
+      ImagePicker();
 
-  String? fotoBase64;
+  final CaminhadaStorageService _storage =
+      CaminhadaStorageService();
+
+  late Caminhada _caminhada;
 
   @override
   void initState() {
     super.initState();
-    fotoBase64 = widget.caminhada.fotoBase64;
+
+    _caminhada = widget.caminhada;
+  }
+
+  Future<void> _salvarFoto(String fotoBase64) async {
+    final atualizada = Caminhada(
+      titulo: _caminhada.titulo,
+      distanciaKm: _caminhada.distanciaKm,
+      calorias: _caminhada.calorias,
+      tempoMinutos: _caminhada.tempoMinutos,
+      origemLatitude:
+          _caminhada.origemLatitude,
+      origemLongitude:
+          _caminhada.origemLongitude,
+      destinoLatitude:
+          _caminhada.destinoLatitude,
+      destinoLongitude:
+          _caminhada.destinoLongitude,
+      rota: _caminhada.rota,
+      fotoBase64: fotoBase64,
+    );
+
+    await _storage.atualizar(atualizada);
+
+    if (!mounted) return;
+
+    setState(() {
+      _caminhada = atualizada;
+    });
   }
 
   Future<void> _tirarFoto() async {
     try {
-      final arquivo = await _picker.pickImage(
+      final imagem =
+          await _imagePicker.pickImage(
         source: ImageSource.camera,
-        imageQuality: 75,
-        maxWidth: 1200,
+        imageQuality: 80,
       );
 
-      if (arquivo == null) return;
+      if (imagem == null) {
+        return;
+      }
 
-      final bytes = await arquivo.readAsBytes();
-      final base64 = base64Encode(bytes);
+      final bytes =
+          await imagem.readAsBytes();
 
-      final atualizada = Caminhada(
-        id: widget.caminhada.id,
-        titulo: widget.caminhada.titulo,
-        origemLatitude: widget.caminhada.origemLatitude,
-        origemLongitude: widget.caminhada.origemLongitude,
-        destinoLatitude: widget.caminhada.destinoLatitude,
-        destinoLongitude: widget.caminhada.destinoLongitude,
-        rota: widget.caminhada.rota,
-        distanciaKm: widget.caminhada.distanciaKm,
-        duracaoMin: widget.caminhada.duracaoMin,
-        calorias: widget.caminhada.calorias,
-        fotoBase64: base64,
-      );
+      final fotoBase64 =
+          base64Encode(bytes);
 
-      await _storage.salvar(atualizada);
+      await _salvarFoto(fotoBase64);
 
       if (!mounted) return;
 
-      setState(() {
-        fotoBase64 = base64;
-      });
-
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Foto salva com sucesso.'),
+          content: Text(
+            'Foto adicionada à caminhada!',
+          ),
         ),
       );
     } catch (e) {
@@ -79,184 +99,430 @@ class _DetalhesCaminhadaScreenState
 
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Não foi possível abrir a câmera.'),
+          content: Text(
+            'Não foi possível adicionar a foto.',
+          ),
         ),
       );
     }
   }
 
+  Future<void> _escolherFoto() async {
+    try {
+      final imagem =
+          await _imagePicker.pickImage(
+        source: ImageSource.gallery,
+        imageQuality: 80,
+      );
+
+      if (imagem == null) {
+        return;
+      }
+
+      final bytes =
+          await imagem.readAsBytes();
+
+      final fotoBase64 =
+          base64Encode(bytes);
+
+      await _salvarFoto(fotoBase64);
+
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Foto adicionada à caminhada!',
+          ),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Não foi possível escolher a foto.',
+          ),
+        ),
+      );
+    }
+  }
+
+  String _formatarTempo(int minutos) {
+    if (minutos < 60) {
+      return '$minutos min';
+    }
+
+    final horas = minutos ~/ 60;
+    final resto = minutos % 60;
+
+    if (resto == 0) {
+      return '${horas}h';
+    }
+
+    return '${horas}h ${resto}min';
+  }
+
   @override
   Widget build(BuildContext context) {
-    final rota = widget.caminhada.rota
-        .map(
-          (ponto) => LatLng(
-            ponto['latitude']!,
-            ponto['longitude']!,
-          ),
-        )
-        .toList();
-
-    final origem = LatLng(
-      widget.caminhada.origemLatitude,
-      widget.caminhada.origemLongitude,
-    );
-
-    final destino = LatLng(
-      widget.caminhada.destinoLatitude,
-      widget.caminhada.destinoLongitude,
-    );
-
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Detalhes da caminhada'),
-        backgroundColor: Colors.green.shade700,
-        foregroundColor: Colors.white,
+        title: Text(
+          _caminhada.titulo,
+        ),
       ),
-      body: ListView(
-        children: [
-          SizedBox(
-            height: 360,
-            child: FlutterMap(
-              options: MapOptions(
-                initialCenter: destino,
-                initialZoom: 15,
+      body: SingleChildScrollView(
+        child: Column(
+          crossAxisAlignment:
+              CrossAxisAlignment.start,
+          children: [
+            _buildFoto(),
+
+            Padding(
+              padding:
+                  const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment:
+                    CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    _caminhada.titulo,
+                    style: const TextStyle(
+                      fontSize: 25,
+                      fontWeight:
+                          FontWeight.bold,
+                    ),
+                  ),
+
+                  const SizedBox(height: 20),
+
+                  _buildInformacoes(),
+
+                  const SizedBox(height: 24),
+
+                  const Text(
+                    'Trajeto',
+                    style: TextStyle(
+                      fontSize: 20,
+                      fontWeight:
+                          FontWeight.bold,
+                    ),
+                  ),
+
+                  const SizedBox(height: 10),
+
+                  _buildMapa(),
+                ],
               ),
-              children: [
-                TileLayer(
-                  urlTemplate:
-                      'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                  userAgentPackageName: 'com.example.caminhadas_app',
-                ),
-                if (rota.isNotEmpty)
-                  PolylineLayer(
-                    polylines: [
-                      Polyline(
-                        points: rota,
-                        strokeWidth: 6,
-                        color: Colors.blue,
-                      ),
-                    ],
-                  ),
-                MarkerLayer(
-                  markers: [
-                    Marker(
-                      point: origem,
-                      width: 55,
-                      height: 55,
-                      child: const Icon(
-                        Icons.location_on,
-                        color: Colors.blue,
-                        size: 50,
-                      ),
-                    ),
-                    Marker(
-                      point: destino,
-                      width: 55,
-                      height: 55,
-                      child: const Icon(
-                        Icons.location_on,
-                        color: Colors.red,
-                        size: 50,
-                      ),
-                    ),
-                  ],
-                ),
-              ],
             ),
-          ),
-          Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  widget.caminhada.titulo,
-                  style: const TextStyle(
-                    fontSize: 25,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                const SizedBox(height: 16),
-                _infoCard(
-                  Icons.straighten,
-                  'Distância',
-                  '${widget.caminhada.distanciaKm.toStringAsFixed(2)} km',
-                ),
-                _infoCard(
-                  Icons.timer_outlined,
-                  'Tempo de caminhada',
-                  '${widget.caminhada.duracaoMin.toStringAsFixed(0)} minutos',
-                ),
-                _infoCard(
-                  Icons.local_fire_department_outlined,
-                  'Gasto calórico estimado',
-                  '${widget.caminhada.calorias.toStringAsFixed(0)} kcal',
-                ),
-                const SizedBox(height: 8),
-                const Text(
-                  'Foto da caminhada',
-                  style: TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                const SizedBox(height: 10),
-                if (fotoBase64 == null || fotoBase64!.isEmpty)
-                  InkWell(
-                    onTap: _tirarFoto,
-                    borderRadius: BorderRadius.circular(14),
-                    child: Container(
-                      height: 180,
-                      width: double.infinity,
-                      decoration: BoxDecoration(
-                        color: Colors.green.withValues(alpha: 0.10),
-                        borderRadius: BorderRadius.circular(14),
-                        border: Border.all(
-                          color: Colors.green.withValues(alpha: 0.35),
-                        ),
-                      ),
-                      child: const Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(
-                            Icons.camera_alt_outlined,
-                            size: 60,
-                            color: Colors.green,
-                          ),
-                          SizedBox(height: 10),
-                          Text('Tirar foto'),
-                        ],
-                      ),
-                    ),
-                  )
-                else
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(14),
-                    child: Image.memory(
-                      base64Decode(fotoBase64!),
-                      height: 250,
-                      width: double.infinity,
-                      fit: BoxFit.cover,
-                    ),
-                  ),
-              ],
-            ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
 
-  Widget _infoCard(IconData icon, String titulo, String valor) {
-    return Card(
-      margin: const EdgeInsets.only(bottom: 10),
-      child: ListTile(
-        leading: Icon(icon, color: Colors.green),
-        title: Text(titulo),
-        subtitle: Text(
-          valor,
-          style: const TextStyle(fontWeight: FontWeight.bold),
+  Widget _buildFoto() {
+    final foto =
+        _caminhada.fotoBase64;
+
+    if (foto == null || foto.isEmpty) {
+      return Container(
+        width: double.infinity,
+        height: 230,
+        color: Colors.grey.shade100,
+        child: Center(
+          child: Column(
+            mainAxisAlignment:
+                MainAxisAlignment.center,
+            children: [
+              Icon(
+                Icons.camera_alt_outlined,
+                size: 55,
+                color: Colors.green.shade700,
+              ),
+
+              const SizedBox(height: 10),
+
+              const Text(
+                'Nenhuma foto adicionada',
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight:
+                      FontWeight.w500,
+                ),
+              ),
+
+              const SizedBox(height: 14),
+
+              Row(
+                mainAxisAlignment:
+                    MainAxisAlignment.center,
+                children: [
+                  FilledButton.icon(
+                    onPressed: _tirarFoto,
+                    icon: const Icon(
+                      Icons.camera_alt,
+                    ),
+                    label: const Text(
+                      'Tirar foto',
+                    ),
+                  ),
+
+                  const SizedBox(width: 10),
+
+                  OutlinedButton.icon(
+                    onPressed:
+                        _escolherFoto,
+                    icon: const Icon(
+                      Icons.photo_library,
+                    ),
+                    label: const Text(
+                      'Galeria',
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
         ),
+      );
+    }
+
+    try {
+      final bytes =
+          base64Decode(foto);
+
+      return Stack(
+        children: [
+          SizedBox(
+            width: double.infinity,
+            height: 260,
+            child: Image.memory(
+              bytes,
+              fit: BoxFit.cover,
+            ),
+          ),
+
+          Positioned(
+            right: 14,
+            bottom: 14,
+            child: Row(
+              children: [
+                FloatingActionButton.small(
+                  heroTag: 'camera',
+                  onPressed: _tirarFoto,
+                  child: const Icon(
+                    Icons.camera_alt,
+                  ),
+                ),
+
+                const SizedBox(width: 8),
+
+                FloatingActionButton.small(
+                  heroTag: 'galeria',
+                  onPressed:
+                      _escolherFoto,
+                  child: const Icon(
+                    Icons.photo_library,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      );
+    } catch (e) {
+      return Container(
+        width: double.infinity,
+        height: 230,
+        color: Colors.grey.shade100,
+        child: const Center(
+          child: Icon(
+            Icons.broken_image_outlined,
+            size: 60,
+          ),
+        ),
+      );
+    }
+  }
+
+  Widget _buildInformacoes() {
+    return Row(
+      children: [
+        Expanded(
+          child: _InfoCard(
+            icon: Icons.route,
+            titulo: 'Distância',
+            valor:
+                '${_caminhada.distanciaKm.toStringAsFixed(2)} km',
+          ),
+        ),
+
+        const SizedBox(width: 8),
+
+        Expanded(
+          child: _InfoCard(
+            icon:
+                Icons.local_fire_department,
+            titulo: 'Calorias',
+            valor:
+                '${_caminhada.calorias.toStringAsFixed(0)} kcal',
+          ),
+        ),
+
+        const SizedBox(width: 8),
+
+        Expanded(
+          child: _InfoCard(
+            icon: Icons.access_time,
+            titulo: 'Tempo',
+            valor: _formatarTempo(
+              _caminhada.tempoMinutos,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildMapa() {
+    final centro =
+        _caminhada.rota.isNotEmpty
+            ? _caminhada.rota.first
+            : LatLng(
+                _caminhada.origemLatitude,
+                _caminhada.origemLongitude,
+              );
+
+    return ClipRRect(
+      borderRadius:
+          BorderRadius.circular(14),
+      child: SizedBox(
+        height: 330,
+        child: FlutterMap(
+          options: MapOptions(
+            initialCenter: centro,
+            initialZoom: 15,
+          ),
+          children: [
+            TileLayer(
+              urlTemplate:
+                  'https://tile.openstreetmap.org/'
+                  '{z}/{x}/{y}.png',
+              userAgentPackageName:
+                  'com.example.caminhadas_app',
+            ),
+
+            if (_caminhada.rota.isNotEmpty)
+              PolylineLayer(
+                polylines: [
+                  Polyline(
+                    points:
+                        _caminhada.rota,
+                    strokeWidth: 5,
+                    color:
+                        Colors.green.shade700,
+                  ),
+                ],
+              ),
+
+            MarkerLayer(
+              markers: [
+                Marker(
+                  point: LatLng(
+                    _caminhada
+                        .origemLatitude,
+                    _caminhada
+                        .origemLongitude,
+                  ),
+                  width: 45,
+                  height: 45,
+                  child: const Icon(
+                    Icons.location_on,
+                    size: 40,
+                    color: Colors.blue,
+                  ),
+                ),
+
+                Marker(
+                  point: LatLng(
+                    _caminhada
+                        .destinoLatitude,
+                    _caminhada
+                        .destinoLongitude,
+                  ),
+                  width: 45,
+                  height: 45,
+                  child: const Icon(
+                    Icons.location_on,
+                    size: 40,
+                    color: Colors.red,
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _InfoCard extends StatelessWidget {
+  final IconData icon;
+  final String titulo;
+  final String valor;
+
+  const _InfoCard({
+    required this.icon,
+    required this.titulo,
+    required this.valor,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding:
+          const EdgeInsets.symmetric(
+        vertical: 14,
+        horizontal: 6,
+      ),
+      decoration: BoxDecoration(
+        color: Colors.green.shade50,
+        borderRadius:
+            BorderRadius.circular(12),
+      ),
+      child: Column(
+        children: [
+          Icon(
+            icon,
+            color: Colors.green.shade700,
+          ),
+
+          const SizedBox(height: 5),
+
+          Text(
+            titulo,
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              fontSize: 11,
+              color: Colors.grey,
+            ),
+          ),
+
+          const SizedBox(height: 3),
+
+          Text(
+            valor,
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              fontSize: 13,
+              fontWeight:
+                  FontWeight.bold,
+            ),
+          ),
+        ],
       ),
     );
   }

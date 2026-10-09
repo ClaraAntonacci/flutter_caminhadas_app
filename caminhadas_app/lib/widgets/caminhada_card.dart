@@ -17,41 +17,100 @@ class CaminhadaCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Card(
-      margin: const EdgeInsets.only(bottom: 12),
+      margin: const EdgeInsets.only(bottom: 14),
+      elevation: 2,
+      clipBehavior: Clip.antiAlias,
       child: InkWell(
-        borderRadius: BorderRadius.circular(12),
         onTap: onTap,
         child: Padding(
           padding: const EdgeInsets.all(12),
           child: Row(
             children: [
-              _imagem(),
-              const SizedBox(width: 12),
+              _buildFoto(),
+
+              const SizedBox(width: 14),
+
               Expanded(
                 child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+                  crossAxisAlignment:
+                      CrossAxisAlignment.start,
                   children: [
                     Text(
                       caminhada.titulo,
-                      maxLines: 1,
+                      maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
                         fontSize: 17,
                         fontWeight: FontWeight.bold,
                       ),
                     ),
-                    const SizedBox(height: 8),
-                    Text(
-                      '${caminhada.distanciaKm.toStringAsFixed(2)} km',
+
+                    const SizedBox(height: 10),
+
+                    Row(
+                      children: [
+                        Icon(
+                          Icons.route,
+                          size: 17,
+                          color: Colors.green.shade700,
+                        ),
+                        const SizedBox(width: 5),
+                        Text(
+                          '${caminhada.distanciaKm.toStringAsFixed(2)} km',
+                          style: const TextStyle(
+                            fontSize: 13,
+                          ),
+                        ),
+                      ],
                     ),
-                    Text(
-                      '${caminhada.duracaoMin.toStringAsFixed(0)} min • '
-                      '${caminhada.calorias.toStringAsFixed(0)} kcal',
+
+                    const SizedBox(height: 5),
+
+                    Row(
+                      children: [
+                        Icon(
+                          Icons.local_fire_department,
+                          size: 17,
+                          color: Colors.orange.shade700,
+                        ),
+                        const SizedBox(width: 5),
+                        Text(
+                          '${caminhada.calorias.toStringAsFixed(0)} kcal',
+                          style: const TextStyle(
+                            fontSize: 13,
+                          ),
+                        ),
+                      ],
+                    ),
+
+                    const SizedBox(height: 5),
+
+                    Row(
+                      children: [
+                        Icon(
+                          Icons.access_time,
+                          size: 17,
+                          color: Colors.blueGrey.shade600,
+                        ),
+                        const SizedBox(width: 5),
+                        Text(
+                          _formatarTempo(
+                            caminhada.tempoMinutos,
+                          ),
+                          style: const TextStyle(
+                            fontSize: 13,
+                          ),
+                        ),
+                      ],
                     ),
                   ],
                 ),
               ),
-              const Icon(Icons.chevron_right),
+
+              const Icon(
+                Icons.chevron_right,
+                color: Colors.grey,
+              ),
             ],
           ),
         ),
@@ -59,32 +118,67 @@ class CaminhadaCard extends StatelessWidget {
     );
   }
 
-  Widget _imagem() {
-    if (caminhada.fotoBase64 != null &&
-        caminhada.fotoBase64!.isNotEmpty) {
-      return ClipRRect(
-        borderRadius: BorderRadius.circular(10),
-        child: Image.memory(
-          base64Decode(caminhada.fotoBase64!),
-          width: 75,
-          height: 75,
-          fit: BoxFit.cover,
+  Widget _buildFoto() {
+    if (caminhada.fotoBase64 == null ||
+        caminhada.fotoBase64!.isEmpty) {
+      return Container(
+        width: 100,
+        height: 100,
+        decoration: BoxDecoration(
+          color: Colors.green.shade50,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Icon(
+          Icons.image_outlined,
+          size: 42,
+          color: Colors.green.shade700,
         ),
       );
     }
 
-    return Container(
-      width: 75,
-      height: 75,
-      decoration: BoxDecoration(
-        color: Colors.green.withValues(alpha: 0.12),
-        borderRadius: BorderRadius.circular(10),
-      ),
-      child: const Icon(
-        Icons.directions_walk,
-        size: 38,
-        color: Colors.green,
-      ),
-    );
+    try {
+      final bytes = base64Decode(
+        caminhada.fotoBase64!,
+      );
+
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(12),
+        child: Image.memory(
+          bytes,
+          width: 100,
+          height: 100,
+          fit: BoxFit.cover,
+        ),
+      );
+    } catch (e) {
+      return Container(
+        width: 100,
+        height: 100,
+        decoration: BoxDecoration(
+          color: Colors.green.shade50,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Icon(
+          Icons.broken_image_outlined,
+          size: 42,
+          color: Colors.green.shade700,
+        ),
+      );
+    }
+  }
+
+  String _formatarTempo(int minutos) {
+    if (minutos < 60) {
+      return '$minutos min';
+    }
+
+    final horas = minutos ~/ 60;
+    final resto = minutos % 60;
+
+    if (resto == 0) {
+      return '${horas}h';
+    }
+
+    return '${horas}h ${resto}min';
   }
 }

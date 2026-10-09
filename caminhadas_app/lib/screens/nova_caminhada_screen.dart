@@ -1,333 +1,642 @@
-import 'dart:math' as math;
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
+import 'package:geolocator/geolocator.dart';
+import 'package:http/http.dart' as http;
+import 'package:image_picker/image_picker.dart';
 import 'package:latlong2/latlong.dart';
 
 import '../models/caminhada.dart';
 import '../services/caminhada_storage_service.dart';
-import '../services/rota_service.dart';
-import '../utils/calculadora_caminhada.dart';
 
 class NovaCaminhadaScreen extends StatefulWidget {
   const NovaCaminhadaScreen({super.key});
 
   @override
-  State<NovaCaminhadaScreen> createState() => _NovaCaminhadaScreenState();
+  State<NovaCaminhadaScreen> createState() =>
+      _NovaCaminhadaScreenState();
 }
 
-class _NovaCaminhadaScreenState extends State<NovaCaminhadaScreen> {
-  static const LatLng origem = LatLng(-22.7130000, -46.8180000);
-
+class _NovaCaminhadaScreenState
+    extends State<NovaCaminhadaScreen> {
   final MapController _mapController = MapController();
-  final RotaService _rotaService = RotaService();
-  final CaminhadaStorageService _storage = CaminhadaStorageService();
 
-  LatLng? destino;
-  List<LatLng> pontosRota = [];
-  double? distanciaKm;
-  double? duracaoMin;
-  bool calculando = false;
+  final CaminhadaStorageService _storage =
+      CaminhadaStorageService();
 
-  Future<void> _selecionarDestino(LatLng ponto) async {
-    setState(() {
-      destino = ponto;
-      pontosRota = [];
-      distanciaKm = null;
-      duracaoMin = null;
-      calculando = true;
-    });
+  final ImagePicker _imagePicker = ImagePicker();
 
+  LatLng? _origem;
+  LatLng? _destino;
+
+  List<LatLng> _rota = [];
+
+  double _distanciaKm = 0;
+  double _calorias = 0;
+  int _tempoMinutos = 0;
+
+  bool _carregandoLocalizacao = true;
+  bool _calculandoRota = false;
+
+  String? _erro;
+
+  @override
+  void initState() {
+    super.initState();
+    _obterLocalizacao();
+  }
+
+  Future<void> _obterLocalizacao() async {
     try {
-      final resultado = await _rotaService.calcularRota(
-        origem: origem,
-        destino: ponto,
+      final servicoAtivo =
+          await Geolocator.isLocationServiceEnabled();
+
+      if (!servicoAtivo) {
+        throw Exception('Serviço de localização desativado.');
+      }
+
+      LocationPermission permissao =
+          await Geolocator.checkPermission();
+
+      if (permissao == LocationPermission.denied) {
+        permissao =
+            await Geolocator.requestPermission();
+      }
+
+      if (permissao == LocationPermission.denied ||
+          permissao ==
+              LocationPermission.deniedForever) {
+        throw Exception('Permissão de localização negada.');
+      }
+
+      final position =
+          await Geolocator.getCurrentPosition(
+        locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.high,
+        ),
+      );
+
+      final local = LatLng(
+        position.latitude,
+        position.longitude,
       );
 
       if (!mounted) return;
 
       setState(() {
-        pontosRota = resultado.pontos;
-        distanciaKm = resultado.distanciaKm;
-        duracaoMin = resultado.duracaoMin;
-        calculando = false;
+        _origem = local;
+        _carregandoLocalizacao = false;
+        _erro = null;
       });
+    } catch (e) {
+      if (!mounted) return;
 
-      if (pontosRota.isNotEmpty) {
-        _ajustarMapa();
-      }
+      // Ponto padrão para testes
+      const localPadrao = LatLng(
+        -23.5505,
+        -46.6333,
+      );
+
+      setState(() {
+        _origem = localPadrao;
+        _carregandoLocalizacao = false;
+        _erro =
+            'Não foi possível obter sua localização. '
+            'Foi utilizado um ponto padrão para o teste.';
+      });
+    }
+  }
+
+  Future<void> _selecionarDestino(
+    LatLng destino,
+  ) async {
+    if (_origem == null) return;
+
+    setState(() {
+      _destino = destino;
+      _rota = [];
+      _distanciaKm = 0;
+      _calorias = 0;
+      _tempoMinutos = 0;
+      _calculandoRota = true;
+      _erro = null;
+    });
+
+    try {
+      final resultado = await _calcularRota(
+        _origem!,
+        destino,
+      );
+
+      if (!mounted) return;
+
+      setState(() {
+        _rota = resultado.rota;
+        _distanciaKm = resultado.distanciaKm;
+        _tempoMinutos = resultado.tempoMinutos;
+
+        // Estimativa simples.
+        _calorias = _distanciaKm * 50;
+
+        _calculandoRota = false;
+      });
     } catch (e) {
       if (!mounted) return;
 
       setState(() {
-        calculando = false;
+        _calculandoRota = false;
+        _erro =
+            'Não foi possível calcular a rota.';
       });
+    }
+  }
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Não foi possível calcular a rota.'),
-        ),
+  Future<_ResultadoRota> _calcularRota(
+    LatLng origem,
+    LatLng destino,
+  ) async {
+    final url = Uri.parse(
+      'https://router.project-osrm.org/route/v1/foot/'
+      '${origem.longitude},${origem.latitude};'
+      '${destino.longitude},${destino.latitude}'
+      '?overview=full&geometries=geojson',
+    );
+
+    final resposta = await http.get(url);
+
+    if (resposta.statusCode != 200) {
+      throw Exception(
+        'Erro na API de rotas: ${resposta.statusCode}',
       );
     }
-  }
 
-  void _ajustarMapa() {
-    if (destino == null) return;
+    final dados =
+        jsonDecode(resposta.body)
+            as Map<String, dynamic>;
 
-    final menorLat = math.min(origem.latitude, destino!.latitude);
-    final maiorLat = math.max(origem.latitude, destino!.latitude);
-    final menorLng = math.min(origem.longitude, destino!.longitude);
-    final maiorLng = math.max(origem.longitude, destino!.longitude);
+    final rotas =
+        dados['routes'] as List<dynamic>?;
 
-    final centro = LatLng(
-      (menorLat + maiorLat) / 2,
-      (menorLng + maiorLng) / 2,
-    );
-
-    final maiorDiferenca = math.max(
-      maiorLat - menorLat,
-      maiorLng - menorLng,
-    );
-
-    double zoom = 17;
-    if (maiorDiferenca > 0.03) {
-      zoom = 12;
-    } else if (maiorDiferenca > 0.015) {
-      zoom = 13;
-    } else if (maiorDiferenca > 0.008) {
-      zoom = 14;
-    } else if (maiorDiferenca > 0.004) {
-      zoom = 15;
-    } else if (maiorDiferenca > 0.002) {
-      zoom = 16;
+    if (rotas == null || rotas.isEmpty) {
+      throw Exception('Nenhuma rota encontrada.');
     }
 
-    _mapController.move(centro, zoom);
+    final primeiraRota =
+        rotas.first as Map<String, dynamic>;
+
+    final distanciaMetros =
+        (primeiraRota['distance'] as num)
+            .toDouble();
+
+    final duracaoSegundos =
+        (primeiraRota['duration'] as num)
+            .toDouble();
+
+    final geometria =
+        primeiraRota['geometry']
+            as Map<String, dynamic>;
+
+    final coordenadas =
+        geometria['coordinates']
+            as List<dynamic>;
+
+    final pontos =
+        coordenadas.map((coordenada) {
+      final lista =
+          coordenada as List<dynamic>;
+
+      return LatLng(
+        (lista[1] as num).toDouble(),
+        (lista[0] as num).toDouble(),
+      );
+    }).toList();
+
+    return _ResultadoRota(
+      rota: pontos,
+      distanciaKm: distanciaMetros / 1000,
+      tempoMinutos:
+          (duracaoSegundos / 60).ceil(),
+    );
   }
 
-  Future<void> _salvar() async {
-    if (destino == null || pontosRota.isEmpty || distanciaKm == null) {
+  Future<void> _abrirModalSalvar() async {
+    if (_destino == null || _rota.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Selecione um destino e aguarde a rota ser calculada.',
+          ),
+        ),
+      );
       return;
     }
 
-    final controller = TextEditingController();
+    final tituloController =
+        TextEditingController();
 
-    final titulo = await showDialog<String>(
+    String? fotoBase64;
+
+    final resultado =
+        await showDialog<Map<String, dynamic>>(
       context: context,
-      builder: (context) {
-        return AlertDialog(
-          title: const Text('Salvar caminhada'),
-          content: TextField(
-            controller: controller,
-            autofocus: true,
-            textCapitalization: TextCapitalization.sentences,
-            decoration: const InputDecoration(
-              labelText: 'Título da caminhada',
-              hintText: 'Ex.: Caminhada da manhã',
-              border: OutlineInputBorder(),
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Cancelar'),
-            ),
-            FilledButton(
-              onPressed: () {
-                final texto = controller.text.trim();
-                if (texto.isEmpty) return;
-                Navigator.pop(context, texto);
-              },
-              child: const Text('Salvar'),
-            ),
-          ],
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (
+            context,
+            setDialogState,
+          ) {
+            return AlertDialog(
+              title: const Text(
+                'Salvar caminhada',
+              ),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    TextField(
+                      controller: tituloController,
+                      decoration:
+                          const InputDecoration(
+                        labelText:
+                            'Título da caminhada',
+                        border:
+                            OutlineInputBorder(),
+                        prefixIcon:
+                            Icon(Icons.title),
+                      ),
+                    ),
+
+                    const SizedBox(height: 16),
+
+                    if (fotoBase64 != null)
+                      _buildPreviewDialog(
+                        fotoBase64!,
+                      ),
+
+                    const SizedBox(height: 10),
+
+                    OutlinedButton.icon(
+                      onPressed: () async {
+                        final imagem =
+                            await _imagePicker
+                                .pickImage(
+                          source:
+                              ImageSource.gallery,
+                          imageQuality: 80,
+                        );
+
+                        if (imagem == null) {
+                          return;
+                        }
+
+                        final bytes =
+                            await imagem.readAsBytes();
+
+                        setDialogState(() {
+                          fotoBase64 =
+                              base64Encode(bytes);
+                        });
+                      },
+                      icon: const Icon(
+                        Icons.photo_library_outlined,
+                      ),
+                      label: Text(
+                        fotoBase64 == null
+                            ? 'Escolher foto'
+                            : 'Trocar foto',
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () {
+                    Navigator.pop(
+                      dialogContext,
+                    );
+                  },
+                  child: const Text(
+                    'Cancelar',
+                  ),
+                ),
+                FilledButton.icon(
+                  onPressed: () {
+                    final titulo =
+                        tituloController.text.trim();
+
+                    if (titulo.isEmpty) {
+                      ScaffoldMessenger.of(
+                        context,
+                      ).showSnackBar(
+                        const SnackBar(
+                          content: Text(
+                            'Digite um título.',
+                          ),
+                        ),
+                      );
+                      return;
+                    }
+
+                    Navigator.pop(
+                      dialogContext,
+                      {
+                        'titulo': titulo,
+                        'fotoBase64':
+                            fotoBase64,
+                      },
+                    );
+                  },
+                  icon: const Icon(
+                    Icons.save,
+                  ),
+                  label: const Text(
+                    'Salvar',
+                  ),
+                ),
+              ],
+            );
+          },
         );
       },
     );
 
-    controller.dispose();
+    tituloController.dispose();
 
-    if (titulo == null || titulo.trim().isEmpty) return;
+    if (resultado == null) return;
+
+    final titulo =
+        resultado['titulo'] as String;
+
+    final foto =
+        resultado['fotoBase64'] as String?;
 
     final caminhada = Caminhada(
-      id: DateTime.now().millisecondsSinceEpoch.toString(),
-      titulo: titulo.trim(),
-      origemLatitude: origem.latitude,
-      origemLongitude: origem.longitude,
-      destinoLatitude: destino!.latitude,
-      destinoLongitude: destino!.longitude,
-      rota: pontosRota
-          .map((ponto) => {
-                'latitude': ponto.latitude,
-                'longitude': ponto.longitude,
-              })
-          .toList(),
-      distanciaKm: distanciaKm!,
-      duracaoMin: duracaoMin ??
-          CalculadoraCaminhada.tempoMinutos(distanciaKm!),
-      calorias: CalculadoraCaminhada.calorias(distanciaKm!),
+      titulo: titulo,
+      distanciaKm: _distanciaKm,
+      calorias: _calorias,
+      tempoMinutos: _tempoMinutos,
+      origemLatitude: _origem!.latitude,
+      origemLongitude: _origem!.longitude,
+      destinoLatitude: _destino!.latitude,
+      destinoLongitude: _destino!.longitude,
+      rota: _rota,
+      fotoBase64: foto,
     );
 
     await _storage.salvar(caminhada);
 
     if (!mounted) return;
 
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text(
+          'Caminhada salva com sucesso!',
+        ),
+      ),
+    );
+
     Navigator.pop(context, true);
+  }
+
+  Widget _buildPreviewDialog(
+    String fotoBase64,
+  ) {
+    try {
+      final bytes =
+          base64Decode(fotoBase64);
+
+      return ClipRRect(
+        borderRadius:
+            BorderRadius.circular(10),
+        child: Image.memory(
+          bytes,
+          height: 130,
+          width: double.infinity,
+          fit: BoxFit.cover,
+        ),
+      );
+    } catch (e) {
+      return const SizedBox();
+    }
+  }
+
+  String _formatarTempo(int minutos) {
+    if (minutos < 60) {
+      return '$minutos min';
+    }
+
+    final horas = minutos ~/ 60;
+    final resto = minutos % 60;
+
+    if (resto == 0) {
+      return '${horas}h';
+    }
+
+    return '${horas}h ${resto}min';
   }
 
   @override
   Widget build(BuildContext context) {
-    final calorias = distanciaKm == null
-        ? null
-        : CalculadoraCaminhada.calorias(distanciaKm!);
+    if (_carregandoLocalizacao) {
+      return Scaffold(
+        appBar: AppBar(
+          title: const Text(
+            'Nova caminhada',
+          ),
+        ),
+        body: const Center(
+          child: Column(
+            mainAxisAlignment:
+                MainAxisAlignment.center,
+            children: [
+              CircularProgressIndicator(),
+              SizedBox(height: 16),
+              Text(
+                'Obtendo sua localização...',
+              ),
+            ],
+          ),
+        ),
+      );
+    }
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Nova caminhada'),
-        backgroundColor: Colors.green.shade700,
-        foregroundColor: Colors.white,
+        title: const Text(
+          'Nova caminhada',
+        ),
       ),
       body: Stack(
         children: [
           FlutterMap(
             mapController: _mapController,
             options: MapOptions(
-              initialCenter: origem,
-              initialZoom: 17,
-              onTap: (_, ponto) => _selecionarDestino(ponto),
+              initialCenter: _origem!,
+              initialZoom: 15,
+              onTap: (
+                tapPosition,
+                ponto,
+              ) {
+                _selecionarDestino(ponto);
+              },
             ),
             children: [
               TileLayer(
                 urlTemplate:
-                    'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                userAgentPackageName: 'com.example.caminhadas_app',
+                    'https://tile.openstreetmap.org/'
+                    '{z}/{x}/{y}.png',
+                userAgentPackageName:
+                    'com.example.caminhadas_app',
               ),
-              if (pontosRota.isNotEmpty)
+
+              if (_rota.isNotEmpty)
                 PolylineLayer(
                   polylines: [
                     Polyline(
-                      points: pontosRota,
-                      strokeWidth: 6,
-                      color: Colors.blue,
+                      points: _rota,
+                      strokeWidth: 5,
+                      color:
+                          Colors.green.shade700,
                     ),
                   ],
                 ),
+
               MarkerLayer(
                 markers: [
                   Marker(
-                    point: origem,
-                    width: 55,
-                    height: 55,
+                    point: _origem!,
+                    width: 50,
+                    height: 50,
                     child: const Icon(
                       Icons.location_on,
+                      size: 45,
                       color: Colors.blue,
-                      size: 50,
                     ),
                   ),
-                  if (destino != null)
+
+                  if (_destino != null)
                     Marker(
-                      point: destino!,
-                      width: 55,
-                      height: 55,
+                      point: _destino!,
+                      width: 50,
+                      height: 50,
                       child: const Icon(
                         Icons.location_on,
+                        size: 45,
                         color: Colors.red,
-                        size: 50,
                       ),
                     ),
                 ],
               ),
             ],
           ),
+
           Positioned(
-            top: 12,
-            left: 12,
-            right: 12,
+            top: 16,
+            left: 16,
+            right: 16,
             child: Card(
+              elevation: 4,
               child: Padding(
-                padding: const EdgeInsets.all(12),
-                child: Text(
-                  destino == null
-                      ? 'Clique no destino da sua caminhada'
-                      : 'Destino: ${destino!.latitude.toStringAsFixed(5)}, '
-                          '${destino!.longitude.toStringAsFixed(5)}',
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(fontSize: 15),
+                padding:
+                    const EdgeInsets.all(14),
+                child: Column(
+                  crossAxisAlignment:
+                      CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Nova caminhada',
+                      style: TextStyle(
+                        fontSize: 20,
+                        fontWeight:
+                            FontWeight.bold,
+                      ),
+                    ),
+
+                    const SizedBox(height: 8),
+
+                    Text(
+                      _destino == null
+                          ? 'Toque no mapa para escolher o destino.'
+                          : _calculandoRota
+                              ? 'Calculando rota...'
+                              : 'Rota calculada. Você pode salvar a caminhada.',
+                    ),
+
+                    if (_erro != null) ...[
+                      const SizedBox(height: 8),
+                      Text(
+                        _erro!,
+                        style: const TextStyle(
+                          color: Colors.orange,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ],
+                  ],
                 ),
               ),
             ),
           ),
-          if (calculando)
-            const Center(
-              child: Card(
-                child: Padding(
-                  padding: EdgeInsets.all(18),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      SizedBox(
-                        width: 22,
-                        height: 22,
-                        child: CircularProgressIndicator(),
-                      ),
-                      SizedBox(width: 12),
-                      Text('Calculando rota...'),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-          if (destino != null && pontosRota.isNotEmpty && !calculando)
+
+          if (_destino != null &&
+              !_calculandoRota &&
+              _rota.isNotEmpty)
             Positioned(
-              left: 12,
-              right: 12,
-              bottom: 12,
+              left: 16,
+              right: 16,
+              bottom: 16,
               child: Card(
+                elevation: 5,
                 child: Padding(
-                  padding: const EdgeInsets.all(14),
+                  padding:
+                      const EdgeInsets.all(14),
                   child: Column(
-                    mainAxisSize: MainAxisSize.min,
                     children: [
                       Row(
+                        mainAxisAlignment:
+                            MainAxisAlignment
+                                .spaceAround,
                         children: [
-                          const Icon(Icons.route, color: Colors.green),
-                          const SizedBox(width: 8),
-                          const Expanded(
-                            child: Text(
-                              'Dados da caminhada',
-                              style: TextStyle(
-                                fontSize: 17,
-                                fontWeight: FontWeight.bold,
-                              ),
+                          _InfoItem(
+                            icon: Icons.route,
+                            titulo: 'Distância',
+                            valor:
+                                '${_distanciaKm.toStringAsFixed(2)} km',
+                          ),
+                          _InfoItem(
+                            icon: Icons
+                                .local_fire_department,
+                            titulo: 'Calorias',
+                            valor:
+                                '${_calorias.toStringAsFixed(0)} kcal',
+                          ),
+                          _InfoItem(
+                            icon: Icons.access_time,
+                            titulo: 'Tempo',
+                            valor:
+                                _formatarTempo(
+                              _tempoMinutos,
                             ),
                           ),
                         ],
                       ),
-                      const SizedBox(height: 10),
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceAround,
-                        children: [
-                          _info(
-                            Icons.straighten,
-                            '${distanciaKm!.toStringAsFixed(2)} km',
-                          ),
-                          _info(
-                            Icons.timer_outlined,
-                            '${(duracaoMin ?? 0).toStringAsFixed(0)} min',
-                          ),
-                          _info(
-                            Icons.local_fire_department_outlined,
-                            '${(calorias ?? 0).toStringAsFixed(0)} kcal',
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 12),
+
+                      const SizedBox(height: 14),
+
                       SizedBox(
                         width: double.infinity,
-                        child: FilledButton.icon(
-                          onPressed: _salvar,
-                          icon: const Icon(Icons.save),
-                          label: const Text('Salvar'),
+                        child:
+                            FilledButton.icon(
+                          onPressed:
+                              _abrirModalSalvar,
+                          icon: const Icon(
+                            Icons.save,
+                          ),
+                          label: const Text(
+                            'Salvar caminhada',
+                          ),
                         ),
                       ),
                     ],
@@ -339,14 +648,57 @@ class _NovaCaminhadaScreenState extends State<NovaCaminhadaScreen> {
       ),
     );
   }
+}
 
-  Widget _info(IconData icon, String texto) {
+class _InfoItem extends StatelessWidget {
+  final IconData icon;
+  final String titulo;
+  final String valor;
+
+  const _InfoItem({
+    required this.icon,
+    required this.titulo,
+    required this.valor,
+  });
+
+  @override
+  Widget build(BuildContext context) {
     return Column(
       children: [
-        Icon(icon, size: 22),
+        Icon(
+          icon,
+          color: Colors.green.shade700,
+          size: 23,
+        ),
         const SizedBox(height: 4),
-        Text(texto),
+        Text(
+          titulo,
+          style: const TextStyle(
+            fontSize: 11,
+            color: Colors.grey,
+          ),
+        ),
+        const SizedBox(height: 2),
+        Text(
+          valor,
+          style: const TextStyle(
+            fontSize: 13,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
       ],
     );
   }
+}
+
+class _ResultadoRota {
+  final List<LatLng> rota;
+  final double distanciaKm;
+  final int tempoMinutos;
+
+  _ResultadoRota({
+    required this.rota,
+    required this.distanciaKm,
+    required this.tempoMinutos,
+  });
 }
