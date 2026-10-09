@@ -1,22 +1,19 @@
+
 import 'package:latlong2/latlong.dart';
 
 class Caminhada {
   final String id;
   final String titulo;
-
   final double distanciaKm;
   final double calorias;
   final int tempoMinutos;
 
   final double origemLatitude;
   final double origemLongitude;
-
   final double destinoLatitude;
   final double destinoLongitude;
 
   final List<LatLng> rota;
-
-  // Foto armazenada como Base64.
   final String? fotoBase64;
 
   Caminhada({
@@ -31,7 +28,7 @@ class Caminhada {
     required this.destinoLongitude,
     required this.rota,
     this.fotoBase64,
-  }) : id = id ?? DateTime.now().millisecondsSinceEpoch.toString();
+  }) : id = id ?? DateTime.now().microsecondsSinceEpoch.toString();
 
   Caminhada copyWith({
     String? titulo,
@@ -44,6 +41,7 @@ class Caminhada {
     double? destinoLongitude,
     List<LatLng>? rota,
     String? fotoBase64,
+    bool removerFoto = false,
   }) {
     return Caminhada(
       id: id,
@@ -56,7 +54,7 @@ class Caminhada {
       destinoLatitude: destinoLatitude ?? this.destinoLatitude,
       destinoLongitude: destinoLongitude ?? this.destinoLongitude,
       rota: rota ?? this.rota,
-      fotoBase64: fotoBase64 ?? this.fotoBase64,
+      fotoBase64: removerFoto ? null : (fotoBase64 ?? this.fotoBase64),
     );
   }
 
@@ -71,14 +69,12 @@ class Caminhada {
       'origemLongitude': origemLongitude,
       'destinoLatitude': destinoLatitude,
       'destinoLongitude': destinoLongitude,
-      'rota': rota
-          .map(
-            (ponto) => {
-              'latitude': ponto.latitude,
-              'longitude': ponto.longitude,
-            },
-          )
-          .toList(),
+      'rota': rota.map((ponto) {
+        return {
+          'latitude': ponto.latitude,
+          'longitude': ponto.longitude,
+        };
+      }).toList(),
       'fotoBase64': fotoBase64,
     };
   }
@@ -98,20 +94,13 @@ class Caminhada {
     return Caminhada(
       id: map['id']?.toString(),
       titulo: map['titulo']?.toString() ?? 'Caminhada',
-      distanciaKm:
-          (map['distanciaKm'] as num?)?.toDouble() ?? 0,
-      calorias:
-          (map['calorias'] as num?)?.toDouble() ?? 0,
-      tempoMinutos:
-          (map['tempoMinutos'] as num?)?.toInt() ?? 0,
-      origemLatitude:
-          (map['origemLatitude'] as num?)?.toDouble() ?? 0,
-      origemLongitude:
-          (map['origemLongitude'] as num?)?.toDouble() ?? 0,
-      destinoLatitude:
-          (map['destinoLatitude'] as num?)?.toDouble() ?? 0,
-      destinoLongitude:
-          (map['destinoLongitude'] as num?)?.toDouble() ?? 0,
+      distanciaKm: (map['distanciaKm'] as num?)?.toDouble() ?? 0,
+      calorias: (map['calorias'] as num?)?.toDouble() ?? 0,
+      tempoMinutos: (map['tempoMinutos'] as num?)?.toInt() ?? 0,
+      origemLatitude: (map['origemLatitude'] as num?)?.toDouble() ?? 0,
+      origemLongitude: (map['origemLongitude'] as num?)?.toDouble() ?? 0,
+      destinoLatitude: (map['destinoLatitude'] as num?)?.toDouble() ?? 0,
+      destinoLongitude: (map['destinoLongitude'] as num?)?.toDouble() ?? 0,
       rota: pontos,
       fotoBase64: map['fotoBase64']?.toString(),
     );

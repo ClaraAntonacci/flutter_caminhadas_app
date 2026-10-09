@@ -1,3 +1,4 @@
+
 import 'dart:convert';
 
 import 'package:shared_preferences/shared_preferences.dart';
@@ -9,7 +10,6 @@ class CaminhadaStorageService {
 
   Future<List<Caminhada>> listar() async {
     final preferences = await SharedPreferences.getInstance();
-
     final dados = preferences.getString(_chave);
 
     if (dados == null || dados.isEmpty) {
@@ -19,15 +19,13 @@ class CaminhadaStorageService {
     try {
       final lista = jsonDecode(dados) as List<dynamic>;
 
-      return lista
-          .map(
-            (item) => Caminhada.fromMap(
-              Map<String, dynamic>.from(item as Map),
-            ),
-          )
-          .toList();
+      return lista.map((item) {
+        return Caminhada.fromMap(
+          Map<String, dynamic>.from(item as Map),
+        );
+      }).toList();
     } catch (e) {
-      return [];
+      throw Exception('Não foi possível carregar as caminhadas: $e');
     }
   }
 
@@ -47,20 +45,38 @@ class CaminhadaStorageService {
     );
 
     if (indice == -1) {
-      return;
+      throw Exception(
+        'Caminhada não encontrada para atualização.',
+      );
     }
 
     caminhadas[indice] = caminhada;
 
     await _salvarLista(caminhadas);
+
+    // Confirma que os dados foram persistidos.
+    final preferences = await SharedPreferences.getInstance();
+    final dadosSalvos = preferences.getString(_chave);
+
+    if (dadosSalvos == null) {
+      throw Exception('Não foi possível confirmar o salvamento.');
+    }
+
+    final listaSalva = jsonDecode(dadosSalvos) as List<dynamic>;
+
+    final itemSalvo = listaSalva.cast<Map>().firstWhere(
+      (item) => item['id'].toString() == caminhada.id,
+    );
+
+    if (itemSalvo['fotoBase64'] != caminhada.fotoBase64) {
+      throw Exception('A foto não foi salva corretamente.');
+    }
   }
 
   Future<void> excluir(String id) async {
     final caminhadas = await listar();
 
-    caminhadas.removeWhere(
-      (item) => item.id == id,
-    );
+    caminhadas.removeWhere((item) => item.id == id);
 
     await _salvarLista(caminhadas);
   }
@@ -71,18 +87,17 @@ class CaminhadaStorageService {
     await preferences.remove(_chave);
   }
 
-  Future<void> _salvarLista(
-    List<Caminhada> caminhadas,
-  ) async {
+  Future<void> _salvarLista(List<Caminhada> caminhadas) async {
     final preferences = await SharedPreferences.getInstance();
 
     final dados = jsonEncode(
       caminhadas.map((item) => item.toMap()).toList(),
     );
 
-    await preferences.setString(
-      _chave,
-      dados,
-    );
+    final sucesso = await preferences.setString(_chave, dados);
+
+    if (!sucesso) {
+      throw Exception('Não foi possível salvar as caminhadas.');
+    }
   }
 }
